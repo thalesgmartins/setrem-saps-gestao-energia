@@ -1,0 +1,1095 @@
+# =============================================================================
+# SIMULAÇÃO DE GESTÃO DE ENERGIA — SAPS/SETREM
+#
+# Todos os sensores deste pacote são SIMULADOS (prefixo "sim_" / "(simulado)").
+# Os "aparelhos" são input_boolean que fazem papel de relés/tomadas inteligentes;
+# as potências vêm de um modelo simples (valores nominais típicos), a geração
+# fotovoltaica vem da posição real do sol em Três de Maio/RS (sun.sun).
+#
+# Ciclo ISO 50001 representado:
+#   MEDIR     -> sensores de potência (W) e energia (kWh)
+#   ANALISAR  -> painel de energia, posto tarifário, custo tarifa branca x convencional
+#   AGIR      -> automações "Gestão: ..." (controle de cargas, deslocamento, FV, ausência)
+#   VERIFICAR -> histórico de longo prazo (recorder) + relatório do script de backfill
+# =============================================================================
+
+homeassistant:
+  customize:
+    sensor.sim_energia_importada:
+      friendly_name: "Energia importada da rede (simulado)"
+    sensor.sim_energia_exportada:
+      friendly_name: "Energia injetada na rede (simulado)"
+    sensor.sim_energia_solar:
+      friendly_name: "Geração fotovoltaica (simulado)"
+    sensor.sim_energia_chuveiro:
+      friendly_name: "Energia chuveiro (simulado)"
+    sensor.sim_energia_ar_condicionado:
+      friendly_name: "Energia ar-condicionado (simulado)"
+    sensor.sim_energia_maquina_lavar:
+      friendly_name: "Energia máquina de lavar (simulado)"
+    sensor.sim_energia_carregador_ve:
+      friendly_name: "Energia carregador VE (simulado)"
+    sensor.sim_energia_iluminacao:
+      friendly_name: "Energia iluminação (simulado)"
+    sensor.sim_energia_tv:
+      friendly_name: "Energia TV (simulado)"
+    sensor.sim_energia_geladeira:
+      friendly_name: "Energia geladeira (simulado)"
+    sensor.sim_custo_tarifa_branca:
+      friendly_name: "Custo acumulado – tarifa branca (simulado)"
+    sensor.sim_custo_tarifa_convencional:
+      friendly_name: "Custo acumulado – tarifa convencional (simulado)"
+    sensor.sim_credito_injecao:
+      friendly_name: "Crédito acumulado – injeção (simulado)"
+
+# -----------------------------------------------------------------------------
+# Relés virtuais (atuadores) e controles da simulação
+# -----------------------------------------------------------------------------
+input_boolean:
+  sim_gestao_ativa:
+    name: "Gestão de energia ativa"
+    icon: mdi:leaf
+  sim_rotina_ativa:
+    name: "Rotina simulada dos moradores"
+    icon: mdi:account-clock
+  sim_presenca:
+    name: "Presença de moradores (simulado)"
+    icon: mdi:home-account
+  sim_chuveiro:
+    name: "Chuveiro elétrico (relé virtual)"
+    icon: mdi:shower-head
+  sim_ar_condicionado:
+    name: "Ar-condicionado (relé virtual)"
+    icon: mdi:air-conditioner
+  sim_maquina_lavar:
+    name: "Máquina de lavar (relé virtual)"
+    icon: mdi:washing-machine
+  sim_carregador_ve:
+    name: "Carregador de veículo elétrico (relé virtual)"
+    icon: mdi:ev-station
+  sim_iluminacao:
+    name: "Iluminação (relé virtual)"
+    icon: mdi:lightbulb-group
+  sim_tv:
+    name: "TV ligada (simulado)"
+    icon: mdi:television
+  sim_tomada_tv:
+    name: "Tomada inteligente da TV (relé virtual)"
+    icon: mdi:power-socket-de
+  # Estados internos da gestão
+  sim_ve_pendente:
+    name: "Carga do VE adiada pela gestão"
+    icon: mdi:timer-sand
+  sim_maquina_pendente:
+    name: "Lavagem adiada pela gestão"
+    icon: mdi:timer-sand
+  sim_ar_desligado_gestao:
+    name: "Ar desligado pelo limite de demanda"
+    icon: mdi:timer-sand
+
+input_number:
+  sim_potencia_fv:
+    name: "Potência instalada FV"
+    min: 0
+    max: 12
+    step: 0.5
+    initial: 2.5
+    unit_of_measurement: kWp
+    icon: mdi:solar-panel
+  sim_nebulosidade:
+    name: "Nebulosidade (simulado)"
+    min: 0
+    max: 100
+    step: 5
+    initial: 20
+    unit_of_measurement: "%"
+    icon: mdi:weather-cloudy
+  sim_limite_demanda:
+    name: "Limite de demanda da rede"
+    min: 2000
+    max: 12000
+    step: 250
+    initial: 6000
+    unit_of_measurement: W
+    icon: mdi:transmission-tower
+  sim_inicio_ponta:
+    name: "Início do horário de ponta"
+    min: 16
+    max: 20
+    step: 1
+    initial: 18
+    unit_of_measurement: h
+    icon: mdi:clock-start
+  sim_atraso_ausencia:
+    name: "Minutos sem presença até desligar"
+    min: 1
+    max: 30
+    step: 1
+    initial: 5
+    unit_of_measurement: min
+    icon: mdi:timer-outline
+  # Tarifas ILUSTRATIVAS (R$/kWh com tributos) — substituir pela tabela vigente da RGE
+  sim_tarifa_convencional:
+    name: "Tarifa convencional"
+    min: 0
+    max: 3
+    step: 0.01
+    initial: 0.80
+    unit_of_measurement: BRL/kWh
+    mode: box
+  sim_tarifa_fora_ponta:
+    name: "Tarifa branca – fora de ponta"
+    min: 0
+    max: 3
+    step: 0.01
+    initial: 0.68
+    unit_of_measurement: BRL/kWh
+    mode: box
+  sim_tarifa_intermediario:
+    name: "Tarifa branca – intermediário"
+    min: 0
+    max: 3
+    step: 0.01
+    initial: 1.00
+    unit_of_measurement: BRL/kWh
+    mode: box
+  sim_tarifa_ponta:
+    name: "Tarifa branca – ponta"
+    min: 0
+    max: 3
+    step: 0.01
+    initial: 1.52
+    unit_of_measurement: BRL/kWh
+    mode: box
+  sim_valor_credito:
+    name: "Valor do crédito de injeção"
+    min: 0
+    max: 3
+    step: 0.01
+    initial: 0.60
+    unit_of_measurement: BRL/kWh
+    mode: box
+
+input_select:
+  sim_modo_sol:
+    name: "Modo do sol (simulado)"
+    options:
+      - "Real"
+      - "Céu limpo ao meio-dia"
+      - "Noite"
+    initial: "Real"
+    icon: mdi:weather-sunny
+  sim_posto_override:
+    name: "Posto tarifário (forçar)"
+    options:
+      - "Automático"
+      - "fora_ponta"
+      - "intermediario"
+      - "ponta"
+    initial: "Automático"
+    icon: mdi:clock-alert
+
+# -----------------------------------------------------------------------------
+# MEDIR: potências (W) calculadas a partir do estado dos relés virtuais
+# -----------------------------------------------------------------------------
+template:
+  - sensor:
+      - name: "Potência chuveiro (simulado)"
+        default_entity_id: sensor.sim_potencia_chuveiro
+        unique_id: sim_potencia_chuveiro
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: "{{ 5500 if is_state('input_boolean.sim_chuveiro', 'on') else 0 }}"
+
+      - name: "Potência ar-condicionado (simulado)"
+        default_entity_id: sensor.sim_potencia_ar_condicionado
+        unique_id: sim_potencia_ar_condicionado
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: "{{ 1400 if is_state('input_boolean.sim_ar_condicionado', 'on') else 0 }}"
+
+      - name: "Potência máquina de lavar (simulado)"
+        default_entity_id: sensor.sim_potencia_maquina_lavar
+        unique_id: sim_potencia_maquina_lavar
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: "{{ 500 if is_state('input_boolean.sim_maquina_lavar', 'on') else 0 }}"
+
+      - name: "Potência carregador VE (simulado)"
+        default_entity_id: sensor.sim_potencia_carregador_ve
+        unique_id: sim_potencia_carregador_ve
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: "{{ 3500 if is_state('input_boolean.sim_carregador_ve', 'on') else 0 }}"
+
+      - name: "Potência iluminação (simulado)"
+        default_entity_id: sensor.sim_potencia_iluminacao
+        unique_id: sim_potencia_iluminacao
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: "{{ 180 if is_state('input_boolean.sim_iluminacao', 'on') else 0 }}"
+
+      # TV: 120 W ligada, 8 W em espera (standby) e 0 W com a tomada desligada
+      - name: "Potência TV (simulado)"
+        default_entity_id: sensor.sim_potencia_tv
+        unique_id: sim_potencia_tv
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: >
+          {% if is_state('input_boolean.sim_tv', 'on') %}120
+          {% elif is_state('input_boolean.sim_tomada_tv', 'on') %}8
+          {% else %}0{% endif %}
+
+      # Geladeira: compressor ciclando 15 min ligado / 15 min desligado
+      - name: "Potência geladeira (simulado)"
+        default_entity_id: sensor.sim_potencia_geladeira
+        unique_id: sim_potencia_geladeira
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: "{{ 150 if now().minute % 30 < 15 else 5 }}"
+
+      # FV: P = kWp x 1000 x 0,8 (perdas) x sen(elevação solar) x fator de nuvens
+      - name: "Potência fotovoltaica (simulado)"
+        default_entity_id: sensor.sim_potencia_solar
+        unique_id: sim_potencia_solar
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: >
+          {% set modo = states('input_select.sim_modo_sol') %}
+          {% if modo == 'Céu limpo ao meio-dia' %}{% set elev = 60 %}
+          {% elif modo == 'Noite' %}{% set elev = 0 %}
+          {% else %}{% set elev = state_attr('sun.sun', 'elevation') | float(0) %}{% endif %}
+          {% set nuvem = 0 if modo == 'Céu limpo ao meio-dia'
+             else states('input_number.sim_nebulosidade') | float(0) / 100 %}
+          {% set kwp = states('input_number.sim_potencia_fv') | float(0) %}
+          {{ (kwp * 1000 * 0.8 * [sin(elev * pi / 180), 0] | max * (1 - 0.75 * nuvem)) | round(0) }}
+
+      - name: "Consumo total da casa (simulado)"
+        default_entity_id: sensor.sim_potencia_consumo
+        unique_id: sim_potencia_consumo
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: >
+          {{ ['sensor.sim_potencia_chuveiro', 'sensor.sim_potencia_ar_condicionado',
+              'sensor.sim_potencia_maquina_lavar', 'sensor.sim_potencia_carregador_ve',
+              'sensor.sim_potencia_iluminacao', 'sensor.sim_potencia_tv',
+              'sensor.sim_potencia_geladeira']
+             | map('states') | map('float', 0) | sum | round(0) }}
+
+      - name: "Potência importada da rede (simulado)"
+        default_entity_id: sensor.sim_potencia_importacao
+        unique_id: sim_potencia_importacao
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: >
+          {{ [states('sensor.sim_potencia_consumo') | float(0)
+              - states('sensor.sim_potencia_solar') | float(0), 0] | max | round(0) }}
+
+      - name: "Potência injetada na rede (simulado)"
+        default_entity_id: sensor.sim_potencia_exportacao
+        unique_id: sim_potencia_exportacao
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: >
+          {{ [states('sensor.sim_potencia_solar') | float(0)
+              - states('sensor.sim_potencia_consumo') | float(0), 0] | max | round(0) }}
+
+      # -----------------------------------------------------------------------
+      # ANALISAR: tarifa branca (ANEEL) — ponta 3 h, intermediário 1 h antes e
+      # 1 h depois, fora de ponta no resto do dia e fins de semana.
+      # Confirmar os horários da distribuidora (RGE) e ajustar sim_inicio_ponta.
+      # Feriados nacionais não são tratados nesta simulação.
+      # -----------------------------------------------------------------------
+      - name: "Posto tarifário (simulado)"
+        default_entity_id: sensor.sim_posto_tarifario
+        unique_id: sim_posto_tarifario
+        icon: mdi:clock-alert-outline
+        state: >
+          {% set forcado = states('input_select.sim_posto_override') %}
+          {% if forcado != 'Automático' %}{{ forcado }}
+          {% else %}
+            {% set h = now().hour %}
+            {% set ini = states('input_number.sim_inicio_ponta') | int(18) %}
+            {% if now().isoweekday() >= 6 %}fora_ponta
+            {% elif ini <= h < ini + 3 %}ponta
+            {% elif h == ini - 1 or h == ini + 3 %}intermediario
+            {% else %}fora_ponta{% endif %}
+          {% endif %}
+
+      - name: "Tarifa vigente (simulado)"
+        default_entity_id: sensor.sim_tarifa_vigente
+        unique_id: sim_tarifa_vigente
+        unit_of_measurement: BRL/kWh
+        icon: mdi:cash-clock
+        state: "{{ states('input_number.sim_tarifa_' ~ states('sensor.sim_posto_tarifario')) | float(0) }}"
+
+      # Taxas de custo (R$/h) — integradas abaixo para virar R$ acumulado
+      - name: "Taxa de custo tarifa branca (simulado)"
+        default_entity_id: sensor.sim_taxa_custo_branca
+        unique_id: sim_taxa_custo_branca
+        unit_of_measurement: BRL/h
+        state_class: measurement
+        state: >
+          {{ (states('sensor.sim_potencia_importacao') | float(0) / 1000
+              * states('sensor.sim_tarifa_vigente') | float(0)) | round(4) }}
+
+      - name: "Taxa de custo tarifa convencional (simulado)"
+        default_entity_id: sensor.sim_taxa_custo_convencional
+        unique_id: sim_taxa_custo_convencional
+        unit_of_measurement: BRL/h
+        state_class: measurement
+        state: >
+          {{ (states('sensor.sim_potencia_importacao') | float(0) / 1000
+              * states('input_number.sim_tarifa_convencional') | float(0)) | round(4) }}
+
+      - name: "Taxa de crédito injeção (simulado)"
+        default_entity_id: sensor.sim_taxa_credito
+        unique_id: sim_taxa_credito
+        unit_of_measurement: BRL/h
+        state_class: measurement
+        state: >
+          {{ (states('sensor.sim_potencia_exportacao') | float(0) / 1000
+              * states('input_number.sim_valor_credito') | float(0)) | round(4) }}
+
+# -----------------------------------------------------------------------------
+# MEDIR: energia (kWh) e custo (R$) acumulados por integração de Riemann
+# -----------------------------------------------------------------------------
+sensor:
+  - platform: integration
+    name: sim_energia_importada
+    unique_id: sim_energia_importada
+    source: sensor.sim_potencia_importacao
+    unit_prefix: k
+    method: left
+    round: 3
+    max_sub_interval: { minutes: 1 }
+  - platform: integration
+    name: sim_energia_exportada
+    unique_id: sim_energia_exportada
+    source: sensor.sim_potencia_exportacao
+    unit_prefix: k
+    method: left
+    round: 3
+    max_sub_interval: { minutes: 1 }
+  - platform: integration
+    name: sim_energia_solar
+    unique_id: sim_energia_solar
+    source: sensor.sim_potencia_solar
+    unit_prefix: k
+    method: left
+    round: 3
+    max_sub_interval: { minutes: 1 }
+  - platform: integration
+    name: sim_energia_chuveiro
+    unique_id: sim_energia_chuveiro
+    source: sensor.sim_potencia_chuveiro
+    unit_prefix: k
+    method: left
+    round: 3
+    max_sub_interval: { minutes: 1 }
+  - platform: integration
+    name: sim_energia_ar_condicionado
+    unique_id: sim_energia_ar_condicionado
+    source: sensor.sim_potencia_ar_condicionado
+    unit_prefix: k
+    method: left
+    round: 3
+    max_sub_interval: { minutes: 1 }
+  - platform: integration
+    name: sim_energia_maquina_lavar
+    unique_id: sim_energia_maquina_lavar
+    source: sensor.sim_potencia_maquina_lavar
+    unit_prefix: k
+    method: left
+    round: 3
+    max_sub_interval: { minutes: 1 }
+  - platform: integration
+    name: sim_energia_carregador_ve
+    unique_id: sim_energia_carregador_ve
+    source: sensor.sim_potencia_carregador_ve
+    unit_prefix: k
+    method: left
+    round: 3
+    max_sub_interval: { minutes: 1 }
+  - platform: integration
+    name: sim_energia_iluminacao
+    unique_id: sim_energia_iluminacao
+    source: sensor.sim_potencia_iluminacao
+    unit_prefix: k
+    method: left
+    round: 3
+    max_sub_interval: { minutes: 1 }
+  - platform: integration
+    name: sim_energia_tv
+    unique_id: sim_energia_tv
+    source: sensor.sim_potencia_tv
+    unit_prefix: k
+    method: left
+    round: 3
+    max_sub_interval: { minutes: 1 }
+  - platform: integration
+    name: sim_energia_geladeira
+    unique_id: sim_energia_geladeira
+    source: sensor.sim_potencia_geladeira
+    unit_prefix: k
+    method: left
+    round: 3
+    max_sub_interval: { minutes: 1 }
+  - platform: integration
+    name: sim_custo_tarifa_branca
+    unique_id: sim_custo_tarifa_branca
+    source: sensor.sim_taxa_custo_branca
+    method: left
+    round: 4
+    max_sub_interval: { minutes: 1 }
+  - platform: integration
+    name: sim_custo_tarifa_convencional
+    unique_id: sim_custo_tarifa_convencional
+    source: sensor.sim_taxa_custo_convencional
+    method: left
+    round: 4
+    max_sub_interval: { minutes: 1 }
+  - platform: integration
+    name: sim_credito_injecao
+    unique_id: sim_credito_injecao
+    source: sensor.sim_taxa_credito
+    method: left
+    round: 4
+    max_sub_interval: { minutes: 1 }
+
+# Energia importada separada por posto tarifário (evidencia o deslocamento de carga)
+utility_meter:
+  sim_importacao_posto:
+    unique_id: sim_importacao_posto
+    source: sensor.sim_energia_importada
+    cycle: monthly
+    tariffs:
+      - fora_ponta
+      - intermediario
+      - ponta
+
+# -----------------------------------------------------------------------------
+# Cenários prontos para a apresentação (funcionam a qualquer hora do dia)
+# -----------------------------------------------------------------------------
+script:
+  sim_demo_chegada_na_ponta:
+    alias: "Demo 1 – Chegada em casa no horário de ponta"
+    icon: mdi:numeric-1-circle
+    sequence:
+      - action: input_boolean.turn_off
+        target: { entity_id: input_boolean.sim_rotina_ativa }
+      - action: input_select.select_option
+        target: { entity_id: input_select.sim_posto_override }
+        data: { option: ponta }
+      - action: input_select.select_option
+        target: { entity_id: input_select.sim_modo_sol }
+        data: { option: "Noite" }
+      - action: input_boolean.turn_on
+        target:
+          entity_id:
+            - input_boolean.sim_presenca
+            - input_boolean.sim_iluminacao
+            - input_boolean.sim_tomada_tv
+            - input_boolean.sim_tv
+            - input_boolean.sim_ar_condicionado
+      - delay: 3
+      - action: input_boolean.turn_on
+        target: { entity_id: input_boolean.sim_chuveiro }
+      - delay: 3
+      - action: input_boolean.turn_on
+        target:
+          entity_id:
+            - input_boolean.sim_carregador_ve
+            - input_boolean.sim_maquina_lavar
+
+  sim_demo_fim_da_ponta:
+    alias: "Demo 2 – Fim do banho e fim da ponta"
+    icon: mdi:numeric-2-circle
+    sequence:
+      - action: input_boolean.turn_off
+        target: { entity_id: input_boolean.sim_chuveiro }
+      - delay: 75
+      - action: input_select.select_option
+        target: { entity_id: input_select.sim_posto_override }
+        data: { option: fora_ponta }
+
+  sim_demo_saida_de_casa:
+    alias: "Demo 3 – Moradores saem com luz e TV ligadas"
+    icon: mdi:numeric-3-circle
+    sequence:
+      - action: input_number.set_value
+        target: { entity_id: input_number.sim_atraso_ausencia }
+        data: { value: 1 }
+      - action: input_boolean.turn_on
+        target:
+          entity_id:
+            - input_boolean.sim_iluminacao
+            - input_boolean.sim_tomada_tv
+            - input_boolean.sim_tv
+      - action: input_boolean.turn_off
+        target: { entity_id: input_boolean.sim_presenca }
+
+  sim_demo_excedente_solar:
+    alias: "Demo 4 – Excedente solar libera carga adiada"
+    icon: mdi:numeric-4-circle
+    sequence:
+      - action: input_boolean.turn_off
+        target:
+          entity_id:
+            - input_boolean.sim_rotina_ativa
+            - input_boolean.sim_maquina_lavar
+            - input_boolean.sim_carregador_ve
+            - input_boolean.sim_chuveiro
+      - action: input_select.select_option
+        target: { entity_id: input_select.sim_modo_sol }
+        data: { option: "Noite" }
+      - action: input_select.select_option
+        target: { entity_id: input_select.sim_posto_override }
+        data: { option: intermediario }
+      - action: input_number.set_value
+        target: { entity_id: input_number.sim_potencia_fv }
+        data: { value: 8 }
+      - delay: 2
+      - action: input_boolean.turn_on
+        target:
+          entity_id:
+            - input_boolean.sim_maquina_lavar
+            - input_boolean.sim_carregador_ve
+      - delay: 10
+      - action: input_select.select_option
+        target: { entity_id: input_select.sim_modo_sol }
+        data: { option: "Céu limpo ao meio-dia" }
+
+  sim_demo_reset:
+    alias: "Demo – Restaurar simulação"
+    icon: mdi:restore
+    sequence:
+      - action: input_boolean.turn_off
+        target:
+          entity_id:
+            - input_boolean.sim_chuveiro
+            - input_boolean.sim_ar_condicionado
+            - input_boolean.sim_maquina_lavar
+            - input_boolean.sim_carregador_ve
+            - input_boolean.sim_iluminacao
+            - input_boolean.sim_tv
+            - input_boolean.sim_ve_pendente
+            - input_boolean.sim_maquina_pendente
+            - input_boolean.sim_ar_desligado_gestao
+      - action: input_boolean.turn_on
+        target:
+          entity_id:
+            - input_boolean.sim_tomada_tv
+            - input_boolean.sim_presenca
+            - input_boolean.sim_gestao_ativa
+            - input_boolean.sim_rotina_ativa
+      - action: input_select.select_option
+        target: { entity_id: input_select.sim_posto_override }
+        data: { option: "Automático" }
+      - action: input_select.select_option
+        target: { entity_id: input_select.sim_modo_sol }
+        data: { option: "Real" }
+      - action: input_number.set_value
+        target: { entity_id: input_number.sim_atraso_ausencia }
+        data: { value: 5 }
+      - action: input_number.set_value
+        target: { entity_id: input_number.sim_potencia_fv }
+        data: { value: 2.5 }
+
+automation:
+  # ---------------------------------------------------------------------------
+  # Medição: troca o posto do medidor por tarifa (não depende da gestão)
+  # ---------------------------------------------------------------------------
+  - id: sim_medicao_troca_posto
+    alias: "Medição: troca posto tarifário do medidor"
+    triggers:
+      - trigger: state
+        entity_id: sensor.sim_posto_tarifario
+      - trigger: homeassistant
+        event: start
+    conditions:
+      - condition: template
+        value_template: "{{ states('sensor.sim_posto_tarifario') in ['fora_ponta', 'intermediario', 'ponta'] }}"
+    actions:
+      - action: select.select_option
+        target: { entity_id: select.sim_importacao_posto }
+        data: { option: "{{ states('sensor.sim_posto_tarifario') }}" }
+
+  # ---------------------------------------------------------------------------
+  # "Física" da simulação: aparelhos terminam o ciclo sozinhos
+  # ---------------------------------------------------------------------------
+  - id: sim_fisica_fim_banho
+    alias: "Simulação: banho termina após 12 min"
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.sim_chuveiro
+        to: "on"
+        for: { minutes: 12 }
+    actions:
+      - action: input_boolean.turn_off
+        target: { entity_id: input_boolean.sim_chuveiro }
+
+  - id: sim_fisica_fim_lavagem
+    alias: "Simulação: lavagem termina após 60 min"
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.sim_maquina_lavar
+        to: "on"
+        for: { minutes: 60 }
+    actions:
+      - action: input_boolean.turn_off
+        target: { entity_id: input_boolean.sim_maquina_lavar }
+
+  - id: sim_fisica_fim_carga_ve
+    alias: "Simulação: carga do VE termina após 3 h"
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.sim_carregador_ve
+        to: "on"
+        for: { hours: 3 }
+    actions:
+      - action: input_boolean.turn_off
+        target: { entity_id: input_boolean.sim_carregador_ve }
+
+  - id: sim_fisica_tomada_tv
+    alias: "Simulação: ligar a TV energiza a tomada"
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.sim_tv
+        to: "on"
+    actions:
+      - action: input_boolean.turn_on
+        target: { entity_id: input_boolean.sim_tomada_tv }
+
+  # ---------------------------------------------------------------------------
+  # Rotina simulada dos moradores (o "comportamento" sem automação)
+  # Mesma rotina usada pelo script de histórico (simulacao/backfill.py)
+  # ---------------------------------------------------------------------------
+  - id: sim_rotina_presenca
+    alias: "Rotina: saída 7h30 e chegada 18h (dias úteis)"
+    triggers:
+      - trigger: time
+        at: "07:30:00"
+        id: sai
+      - trigger: time
+        at: "18:00:00"
+        id: chega
+    conditions:
+      - condition: state
+        entity_id: input_boolean.sim_rotina_ativa
+        state: "on"
+      - condition: time
+        weekday: [mon, tue, wed, thu, fri]
+    actions:
+      - action: "input_boolean.turn_{{ 'off' if trigger.id == 'sai' else 'on' }}"
+        target: { entity_id: input_boolean.sim_presenca }
+
+  - id: sim_rotina_banho
+    alias: "Rotina: banhos às 6h40 e 19h"
+    triggers:
+      - trigger: time
+        at: ["06:40:00", "19:00:00"]
+    conditions:
+      - condition: state
+        entity_id: input_boolean.sim_rotina_ativa
+        state: "on"
+    actions:
+      - action: input_boolean.turn_on
+        target: { entity_id: input_boolean.sim_chuveiro }
+
+  - id: sim_rotina_iluminacao
+    alias: "Rotina: iluminação (às vezes esquecida ligada)"
+    triggers:
+      - trigger: time
+        at: "06:30:00"
+        id: manha
+      - trigger: time
+        at: "07:30:00"
+        id: saida
+      - trigger: time
+        at: "18:45:00"
+        id: noite
+      - trigger: time
+        at: "23:30:00"
+        id: dormir
+    conditions:
+      - condition: state
+        entity_id: input_boolean.sim_rotina_ativa
+        state: "on"
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: [manha]
+              - condition: time
+                weekday: [mon, tue, wed, thu, fri]
+            sequence:
+              - action: input_boolean.turn_on
+                target: { entity_id: input_boolean.sim_iluminacao }
+          # 30% dos dias o morador sai e esquece a luz acesa
+          - conditions:
+              - condition: trigger
+                id: [saida]
+              - condition: template
+                value_template: "{{ range(10) | random >= 3 }}"
+            sequence:
+              - action: input_boolean.turn_off
+                target: { entity_id: input_boolean.sim_iluminacao }
+          - conditions:
+              - condition: trigger
+                id: [noite]
+              - condition: state
+                entity_id: input_boolean.sim_presenca
+                state: "on"
+            sequence:
+              - action: input_boolean.turn_on
+                target: { entity_id: input_boolean.sim_iluminacao }
+          - conditions:
+              - condition: trigger
+                id: [dormir]
+            sequence:
+              - action: input_boolean.turn_off
+                target: { entity_id: input_boolean.sim_iluminacao }
+
+  - id: sim_rotina_tv
+    alias: "Rotina: TV das 19h30 às 23h (fica em standby)"
+    triggers:
+      - trigger: time
+        at: "19:30:00"
+        id: liga
+      - trigger: time
+        at: "23:00:00"
+        id: desliga
+    conditions:
+      - condition: state
+        entity_id: input_boolean.sim_rotina_ativa
+        state: "on"
+    actions:
+      - action: "input_boolean.turn_{{ 'on' if trigger.id == 'liga' else 'off' }}"
+        target: { entity_id: input_boolean.sim_tv }
+
+  - id: sim_rotina_ar
+    alias: "Rotina: ar-condicionado em dias quentes"
+    triggers:
+      - trigger: time
+        at: "19:15:00"
+        id: liga
+      - trigger: time
+        at: "13:00:00"
+        id: liga_fds
+      - trigger: time
+        at: ["17:00:00", "23:00:00"]
+        id: desliga
+    conditions:
+      - condition: state
+        entity_id: input_boolean.sim_rotina_ativa
+        state: "on"
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: [liga, liga_fds]
+              - condition: template
+                value_template: >
+                  {{ (trigger.id == 'liga' or now().isoweekday() >= 6)
+                     and range(10) | random < 6 }}
+            sequence:
+              - action: input_boolean.turn_on
+                target: { entity_id: input_boolean.sim_ar_condicionado }
+          - conditions:
+              - condition: trigger
+                id: [desliga]
+            sequence:
+              - action: input_boolean.turn_off
+                target: { entity_id: input_boolean.sim_ar_condicionado }
+
+  - id: sim_rotina_maquina
+    alias: "Rotina: máquina de lavar (ter/qui 18h30, sáb 10h)"
+    triggers:
+      - trigger: time
+        at: "18:30:00"
+        id: semana
+      - trigger: time
+        at: "10:00:00"
+        id: sabado
+    conditions:
+      - condition: state
+        entity_id: input_boolean.sim_rotina_ativa
+        state: "on"
+      - condition: template
+        value_template: >
+          {{ (trigger.id == 'semana' and now().isoweekday() in [2, 4])
+             or (trigger.id == 'sabado' and now().isoweekday() == 6) }}
+    actions:
+      - action: input_boolean.turn_on
+        target: { entity_id: input_boolean.sim_maquina_lavar }
+
+  - id: sim_rotina_ve
+    alias: "Rotina: VE conectado ao chegar (seg/qua/sex 18h20)"
+    triggers:
+      - trigger: time
+        at: "18:20:00"
+    conditions:
+      - condition: state
+        entity_id: input_boolean.sim_rotina_ativa
+        state: "on"
+      - condition: time
+        weekday: [mon, wed, fri]
+    actions:
+      - action: input_boolean.turn_on
+        target: { entity_id: input_boolean.sim_carregador_ve }
+
+  # ---------------------------------------------------------------------------
+  # AGIR: automações de gestão (só atuam com "Gestão de energia ativa" ligada)
+  # ---------------------------------------------------------------------------
+  - id: sim_gestao_deslocamento
+    alias: "Gestão: adia cargas flexíveis na ponta/intermediário"
+    triggers:
+      - trigger: state
+        entity_id:
+          - input_boolean.sim_carregador_ve
+          - input_boolean.sim_maquina_lavar
+        to: "on"
+    conditions:
+      - condition: state
+        entity_id: input_boolean.sim_gestao_ativa
+        state: "on"
+      # Carga ligada pela própria gestão (flag pendente ainda ligada) não é bloqueada
+      - condition: template
+        value_template: >
+          {{ is_state('input_boolean.sim_ve_pendente' if trigger.entity_id == 'input_boolean.sim_carregador_ve'
+                      else 'input_boolean.sim_maquina_pendente', 'off') }}
+      - condition: template
+        value_template: >
+          {% set limiar = 2500 if trigger.entity_id == 'input_boolean.sim_carregador_ve' else 600 %}
+          {{ states('sensor.sim_posto_tarifario') in ['ponta', 'intermediario']
+             and states('sensor.sim_potencia_exportacao') | float(0) < limiar }}
+    actions:
+      - action: input_boolean.turn_off
+        target: { entity_id: "{{ trigger.entity_id }}" }
+      - action: input_boolean.turn_on
+        target:
+          entity_id: >
+            {{ 'input_boolean.sim_ve_pendente'
+               if trigger.entity_id == 'input_boolean.sim_carregador_ve'
+               else 'input_boolean.sim_maquina_pendente' }}
+      - action: logbook.log
+        data:
+          name: "Gestão de energia"
+          message: >
+            {% set nomes = {'ponta': 'ponta', 'intermediario': 'intermediário', 'fora_ponta': 'fora de ponta'} %}
+            adiou {{ state_attr(trigger.entity_id, 'friendly_name') }}: horário
+            {{ nomes.get(states('sensor.sim_posto_tarifario')) }} a
+            R$ {{ '%.2f' | format(states('sensor.sim_tarifa_vigente') | float(0)) | replace('.', ',') }}/kWh
+          entity_id: "{{ trigger.entity_id }}"
+
+  # Uma carga adiada é liberada quando há excedente solar suficiente para ela
+  # ou quando o posto é fora de ponta e a carga cabe no limite de demanda.
+  # A flag "pendente" só é limpa depois de ligar a carga, para que a automação
+  # de deslocamento reconheça que foi a própria gestão que ligou o aparelho.
+  - id: sim_gestao_libera_cargas
+    alias: "Gestão: libera cargas adiadas (fora de ponta ou excedente solar)"
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: sensor.sim_posto_tarifario
+        to: fora_ponta
+      - trigger: numeric_state
+        entity_id: sensor.sim_potencia_exportacao
+        above: 600
+        for: { minutes: 1 }
+      - trigger: time_pattern
+        minutes: /5
+    conditions:
+      - condition: state
+        entity_id: input_boolean.sim_gestao_ativa
+        state: "on"
+      - condition: state
+        entity_id:
+          - input_boolean.sim_maquina_pendente
+          - input_boolean.sim_ve_pendente
+        match: any
+        state: "on"
+    actions:
+      - repeat:
+          for_each:
+            - { carga: input_boolean.sim_maquina_lavar, flag: input_boolean.sim_maquina_pendente, potencia: 500, excedente_min: 600 }
+            - { carga: input_boolean.sim_carregador_ve, flag: input_boolean.sim_ve_pendente, potencia: 3500, excedente_min: 2500 }
+          sequence:
+            - variables:
+                excedente: "{{ states('sensor.sim_potencia_exportacao') | float(0) }}"
+                cabe_na_demanda: >
+                  {{ states('sensor.sim_potencia_importacao') | float(0) + repeat.item.potencia
+                     < states('input_number.sim_limite_demanda') | float(0) }}
+                por_solar: "{{ excedente >= repeat.item.excedente_min }}"
+                por_tarifa: "{{ is_state('sensor.sim_posto_tarifario', 'fora_ponta') and cabe_na_demanda }}"
+            - if:
+                - condition: template
+                  value_template: "{{ is_state(repeat.item.flag, 'on') and (por_solar or por_tarifa) }}"
+              then:
+                - action: input_boolean.turn_on
+                  target: { entity_id: "{{ repeat.item.carga }}" }
+                - delay: 2
+                - action: input_boolean.turn_off
+                  target: { entity_id: "{{ repeat.item.flag }}" }
+                - action: logbook.log
+                  data:
+                    name: "Gestão de energia"
+                    message: >
+                      liberou {{ state_attr(repeat.item.carga, 'friendly_name') }}
+                      ({{ 'excedente solar de ' ~ excedente | int ~ ' W' if por_solar else 'tarifa fora de ponta' }})
+                    entity_id: "{{ repeat.item.carga }}"
+                - delay: 5
+
+  - id: sim_gestao_limite_demanda
+    alias: "Gestão: controle de demanda (desliga cargas não essenciais)"
+    mode: single
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.sim_potencia_importacao
+        above: input_number.sim_limite_demanda
+        for: { seconds: 5 }
+    conditions:
+      - condition: state
+        entity_id: input_boolean.sim_gestao_ativa
+        state: "on"
+    actions:
+      - repeat:
+          while:
+            - condition: template
+              value_template: >
+                {{ states('sensor.sim_potencia_importacao') | float(0)
+                   > states('input_number.sim_limite_demanda') | float(0) }}
+            - condition: template
+              value_template: "{{ repeat.index <= 3 }}"
+          sequence:
+            - choose:
+                - conditions:
+                    - condition: state
+                      entity_id: input_boolean.sim_carregador_ve
+                      state: "on"
+                  sequence:
+                    - action: input_boolean.turn_off
+                      target: { entity_id: input_boolean.sim_carregador_ve }
+                    - action: input_boolean.turn_on
+                      target: { entity_id: input_boolean.sim_ve_pendente }
+                - conditions:
+                    - condition: state
+                      entity_id: input_boolean.sim_ar_condicionado
+                      state: "on"
+                  sequence:
+                    - action: input_boolean.turn_off
+                      target: { entity_id: input_boolean.sim_ar_condicionado }
+                    - action: input_boolean.turn_on
+                      target: { entity_id: input_boolean.sim_ar_desligado_gestao }
+                - conditions:
+                    - condition: state
+                      entity_id: input_boolean.sim_maquina_lavar
+                      state: "on"
+                  sequence:
+                    - action: input_boolean.turn_off
+                      target: { entity_id: input_boolean.sim_maquina_lavar }
+                    - action: input_boolean.turn_on
+                      target: { entity_id: input_boolean.sim_maquina_pendente }
+            - action: logbook.log
+              data:
+                name: "Gestão de energia"
+                message: >
+                  demanda acima de {{ states('input_number.sim_limite_demanda') | int }} W:
+                  carga não essencial desligada
+                entity_id: input_boolean.sim_gestao_ativa
+            - delay: 3
+
+  - id: sim_gestao_restaura_ar
+    alias: "Gestão: religa o ar quando a demanda cai"
+    triggers:
+      - trigger: template
+        value_template: >
+          {{ states('sensor.sim_potencia_importacao') | float(0) + 1500
+             < states('input_number.sim_limite_demanda') | float(0) }}
+        for: { minutes: 1 }
+    conditions:
+      - condition: state
+        entity_id: input_boolean.sim_ar_desligado_gestao
+        state: "on"
+    actions:
+      - action: input_boolean.turn_off
+        target: { entity_id: input_boolean.sim_ar_desligado_gestao }
+      - if:
+          - condition: state
+            entity_id: input_boolean.sim_presenca
+            state: "on"
+        then:
+          - action: input_boolean.turn_on
+            target: { entity_id: input_boolean.sim_ar_condicionado }
+          - action: logbook.log
+            data:
+              name: "Gestão de energia"
+              message: "demanda normalizada: ar-condicionado religado"
+              entity_id: input_boolean.sim_ar_condicionado
+
+  - id: sim_gestao_ausencia
+    alias: "Gestão: desliga iluminação, TV e ar sem presença"
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.sim_presenca
+        to: "off"
+        for:
+          minutes: "{{ states('input_number.sim_atraso_ausencia') | int(5) }}"
+    conditions:
+      - condition: state
+        entity_id: input_boolean.sim_gestao_ativa
+        state: "on"
+      - condition: state
+        entity_id:
+          - input_boolean.sim_iluminacao
+          - input_boolean.sim_tv
+          - input_boolean.sim_ar_condicionado
+        match: any
+        state: "on"
+    actions:
+      - action: input_boolean.turn_off
+        target:
+          entity_id:
+            - input_boolean.sim_iluminacao
+            - input_boolean.sim_tv
+            - input_boolean.sim_ar_condicionado
+      - action: logbook.log
+        data:
+          name: "Gestão de energia"
+          message: "casa vazia: iluminação, TV e ar-condicionado desligados"
+          entity_id: input_boolean.sim_gestao_ativa
+
+  - id: sim_gestao_standby
+    alias: "Gestão: corta o standby da TV"
+    triggers:
+      - trigger: state
+        entity_id: input_boolean.sim_tv
+        to: "off"
+        for: { minutes: 5 }
+    conditions:
+      - condition: state
+        entity_id: input_boolean.sim_gestao_ativa
+        state: "on"
+      - condition: state
+        entity_id: input_boolean.sim_tomada_tv
+        state: "on"
+    actions:
+      - action: input_boolean.turn_off
+        target: { entity_id: input_boolean.sim_tomada_tv }
+      - action: logbook.log
+        data:
+          name: "Gestão de energia"
+          message: "TV em standby: tomada inteligente desligada"
+          entity_id: input_boolean.sim_tomada_tv

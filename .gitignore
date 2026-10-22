@@ -218,3 +218,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Metadados do Windows (WSL)
+*:Zone.Identifier
+
+# Variáveis com credenciais (ex.: token do túnel Cloudflare)
+.env

@@ -1,0 +1,32 @@
+
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# Load frontend themes from the themes folder
+frontend:
+  themes: !include_dir_merge_named themes
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+homeassistant:
+  packages: !include_dir_named packages
+
+lovelace:
+  dashboards:
+    energia-simulada:
+      mode: yaml
+      title: Energia (simulado)
+      icon: mdi:home-lightning-bolt
+      show_in_sidebar: true
+      filename: dashboards/simulacao.yaml
+
+#http:
+#  use_x_forwarded_for: true
+#  trusted_proxies:
+#    - 127.0.0.1
+#    - ::1
+#    - 172.16.0.0/12      # Cobre a faixa padrão de redes internas do Docker (bridge)
+#    - 192.168.0.0/16     # Sub-redes locais típicas
+#    - 10.0.0.0/8         # Outras faixas privadas (se aplicável)

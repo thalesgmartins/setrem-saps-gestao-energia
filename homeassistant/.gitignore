@@ -1,0 +1,15 @@
+# Estado de execução do Home Assistant (não versionar)
+config/.storage/
+config/.cloud/
+config/deps/
+config/tts/
+config/home-assistant_v2.db*
+config/home-assistant.log*
+config/.ha_run.lock
+config/.HA_VERSION
+config/secrets.yaml
+config/simulacao/.token
+config/simulacao/.backfill_estado.json
+config/.cache/
+config/simulacao/__pycache__/
+.env

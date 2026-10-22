@@ -1,0 +1,170 @@
+title: Gestão de energia (simulado)
+views:
+  - title: Demonstração
+    path: demo
+    icon: mdi:flash
+    type: sections
+    max_columns: 3
+    sections:
+      - type: grid
+        cards:
+          - type: markdown
+            content: >
+              ### ⚠️ Dados simulados
+
+              Aparelhos são **relés virtuais** e as potências vêm de um modelo
+              (valores nominais típicos). A geração FV usa a posição real do sol
+              em Três de Maio/RS. Ciclo ISO 50001: **medir → analisar → agir → verificar**.
+          - type: tile
+            entity: input_boolean.sim_gestao_ativa
+            features_position: inline
+            features:
+              - type: toggle
+          - type: tile
+            entity: sensor.sim_posto_tarifario
+            name: Posto tarifário
+          - type: tile
+            entity: sensor.sim_tarifa_vigente
+            name: Tarifa agora
+          - type: tile
+            entity: sensor.sim_potencia_consumo
+            name: Consumo
+          - type: tile
+            entity: sensor.sim_potencia_solar
+            name: Geração FV
+          - type: tile
+            entity: sensor.sim_potencia_importacao
+            name: Importando
+          - type: tile
+            entity: sensor.sim_potencia_exportacao
+            name: Injetando
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Cenários para a banca
+          - type: button
+            entity: script.sim_demo_chegada_na_ponta
+            name: "1 · Chegada na ponta"
+            tap_action: { action: perform-action, perform_action: script.sim_demo_chegada_na_ponta }
+          - type: button
+            entity: script.sim_demo_fim_da_ponta
+            name: "2 · Fim do banho e da ponta"
+            tap_action: { action: perform-action, perform_action: script.sim_demo_fim_da_ponta }
+          - type: button
+            entity: script.sim_demo_saida_de_casa
+            name: "3 · Saída de casa"
+            tap_action: { action: perform-action, perform_action: script.sim_demo_saida_de_casa }
+          - type: button
+            entity: script.sim_demo_excedente_solar
+            name: "4 · Excedente solar"
+            tap_action: { action: perform-action, perform_action: script.sim_demo_excedente_solar }
+          - type: button
+            entity: script.sim_demo_reset
+            name: Restaurar
+            tap_action: { action: perform-action, perform_action: script.sim_demo_reset }
+          - type: logbook
+            title: "AGIR: o que a gestão fez"
+            hours_to_show: 6
+            target:
+              entity_id:
+                - input_boolean.sim_gestao_ativa
+                - input_boolean.sim_carregador_ve
+                - input_boolean.sim_maquina_lavar
+                - input_boolean.sim_ar_condicionado
+                - input_boolean.sim_tomada_tv
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Relés virtuais
+          - type: entities
+            entities:
+              - input_boolean.sim_presenca
+              - input_boolean.sim_chuveiro
+              - input_boolean.sim_ar_condicionado
+              - input_boolean.sim_carregador_ve
+              - input_boolean.sim_maquina_lavar
+              - input_boolean.sim_iluminacao
+              - input_boolean.sim_tv
+              - input_boolean.sim_tomada_tv
+              - type: divider
+              - input_boolean.sim_ve_pendente
+              - input_boolean.sim_maquina_pendente
+              - input_boolean.sim_ar_desligado_gestao
+              - input_boolean.sim_rotina_ativa
+
+      - type: grid
+        column_span: 3
+        cards:
+          - type: history-graph
+            title: "MEDIR: potência na última hora"
+            hours_to_show: 1
+            entities:
+              - entity: sensor.sim_potencia_consumo
+                name: Consumo
+              - entity: sensor.sim_potencia_solar
+                name: Geração FV
+              - entity: sensor.sim_potencia_importacao
+                name: Importação
+              - entity: input_number.sim_limite_demanda
+                name: Limite
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Parâmetros da simulação
+          - type: entities
+            entities:
+              - input_select.sim_posto_override
+              - input_select.sim_modo_sol
+              - input_number.sim_nebulosidade
+              - input_number.sim_potencia_fv
+              - input_number.sim_limite_demanda
+              - input_number.sim_inicio_ponta
+              - input_number.sim_atraso_ausencia
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Tarifas (ilustrativas)
+          - type: entities
+            entities:
+              - input_number.sim_tarifa_convencional
+              - input_number.sim_tarifa_fora_ponta
+              - input_number.sim_tarifa_intermediario
+              - input_number.sim_tarifa_ponta
+              - input_number.sim_valor_credito
+
+  - title: Histórico
+    path: historico
+    icon: mdi:chart-bar
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        column_span: 2
+        cards:
+          - type: energy-date-selection
+          - type: energy-usage-graph
+      - type: grid
+        cards:
+          - type: energy-distribution
+            link_dashboard: true
+          - type: statistics-graph
+            title: "VERIFICAR: importação por posto tarifário (kWh/dia)"
+            chart_type: bar
+            period: day
+            days_to_show: 30
+            stat_types: [change]
+            entities:
+              - entity: sensor.sim_importacao_posto_ponta
+                name: Ponta
+              - entity: sensor.sim_importacao_posto_intermediario
+                name: Intermediário
+              - entity: sensor.sim_importacao_posto_fora_ponta
+                name: Fora de ponta
+      - type: grid
+        cards:
+          - type: energy-sources-table
+          - type: energy-devices-graph
